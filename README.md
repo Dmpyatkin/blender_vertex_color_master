@@ -1,3 +1,7 @@
+My (Dmpyatkin) changes: 
+Made this addont to work in Blender 4.5, changed way of accesing the brushes mode (Mix, Add, Sub).
+
+
 # Vertex Color Master for Blender
 
 > __Warning:__ This addon does not work well from **Blender 3.2 to 3.6** due to internal changes in vertex attributes in Blender. However, there is currently an [0.9.1 alpha release] available that should work with **Blender 4.0+**. This alpha release has some issues (notably the redo panel) that may be fixed in the future, but I can't make any guarantees due to other commitments.
