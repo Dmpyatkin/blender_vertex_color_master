@@ -17,12 +17,25 @@
 
 # <pep8 compliant>
 
+
+# COMMON IDENTIFIERS:
+
+# PARAMETERS
+# src_attr, dst_attr : source and destination Attributes (containing array of per vertex or corner data)
+# src_channel_idx, dst_channel_idx : source and destination channel indices (0-3)
+
+# LOCAL VARIABLES
+# src_av, dst_av : source and destination Attribute Values (e.g. src_attr.data[i].color)
+# src_cv, dst_cv : source and destination channel values (e.g. src_attr.data[i].color[src_channel_idx])
+
+
 import bpy
 import bmesh
 import random
 from math import fmod
 from mathutils import Color, Vector
 from .vcm_globals import *
+
 
 def posterize(value, steps):
     return round(value * steps) / steps
@@ -55,15 +68,16 @@ def get_active_channel_mask(active_channels):
 
 
 def get_isolated_channel_ids(vcol):
-    vcol_id = vcol.name
-    prefix = isolate_mode_name_prefix
-    prefix_len = len(prefix)
+    if vcol is not None:
+        vcol_id = vcol.name
+        prefix = isolate_mode_name_prefix
+        prefix_len = len(prefix)
 
-    if vcol_id.startswith(prefix) and len(vcol_id) > prefix_len + 3:
-        iso_vcol_id = vcol_id[prefix_len + 3:] # get vcol id from end of string
-        iso_channel_id = vcol_id[prefix_len + 1] # get channel id
-        if iso_channel_id in valid_channel_ids:
-            return [iso_vcol_id, iso_channel_id]
+        if vcol_id.startswith(prefix) and len(vcol_id) > prefix_len + 3:
+            iso_vcol_id = vcol_id[prefix_len + 3:] # get vcol id from end of string
+            iso_channel_id = vcol_id[prefix_len + 1] # get channel id
+            if iso_channel_id in valid_channel_ids:
+                return [iso_vcol_id, iso_channel_id]
 
     return None
 
@@ -88,82 +102,99 @@ def convert_rgb_to_luminosity(mesh, src_vcol, dst_vcol, dst_channel_idx, dst_all
             dst_vcol.data[loop_index].color[dst_channel_idx] = luminosity
 
 
-# alpha_mode
-# 'OVERWRITE' - replace with copied channel value
-# 'PRESERVE' - keep existing alpha value
+# Blender now uses Attributes for everything. vcol channels are attributes, and colors are vectors
+# Must check domain and type are the same between src + destination or conversion is required
+
+# TODO: Should this copy channels of ANY kind of attribute?
+# ByteColorAttribute (RGBA 8bit), FloatColorAttribute (RGBA 32bit) < For colours
+
+# Other Attribute types:
+# BoolAttribute, ByteColorAttribute, ByteIntAttribute, Float2Attribute, Float4x4Attribute, FloatAttribute,
+# FloatVectorAttribute, Int2Attribute, IntAttribute, QuaternionAttribute, StringAttribute
+
+# src_attribute: Source attribute (ByteColorAttribute or FloatColorAttribute)
+# dst_attribute: Destination attribute (Attribute of same data_type and domain as src_attr)
+# src_channel_idx: Source channel (0-3)
+# dst_channel_idx: Destination channel (0-3)
+
+# alpha_mode: When copying to all channels, what to do with the alpha channel
+# 'USE_SRC' - keep existing alpha value from source
+# 'USE_DST' - keep existing alpha value from destination
 # 'FILL' - fill alpha with 1.0
-def copy_channel(mesh, src_vcol, dst_vcol, src_channel_idx, dst_channel_idx, swap=False,
-                 dst_all_channels=False, alpha_mode='PRESERVE'):
-    if dst_all_channels:
-        color_size = len(src_vcol.data[0].color) if len(src_vcol.data) > 0 else 3
-        if alpha_mode == 'OVERWRITE' or color_size < 4:
-            for loop_index, loop in enumerate(mesh.loops):
-                src_val = src_vcol.data[loop_index].color[src_channel_idx]
-                dst_vcol.data[loop_index].color = [src_val] * color_size
-        elif alpha_mode == 'FILL':
-            for loop_index, loop in enumerate(mesh.loops):
-                src_val = src_vcol.data[loop_index].color[src_channel_idx]
-                dst_vcol.data[loop_index].color = [src_val, src_val, src_val, 1.0]
-        else: # default to preserve
-            for loop_index, loop in enumerate(mesh.loops):
-                c = src_vcol.data[loop_index].color
-                src_val = c[src_channel_idx]
-                c[0] = src_val
-                c[1] = src_val
-                c[2] = src_val
-                dst_vcol.data[loop_index].color = c
+def copy_channel(mesh, src_attribute, dst_attribute, src_channel_idx, dst_channel_idx,
+                 swap=False, dst_all_channels=False, alpha_mode='USE_SRC'):
+    if src_attribute.data_type != dst_attribute.data_type or src_attribute.domain != dst_attribute.domain:
+        return
+
+    if dst_all_channels: # typically used by isolate mode
+        if alpha_mode == 'FILL':
+            for i, src_av in enumerate(src_attribute.data):
+                src_cv = src_av.color[src_channel_idx]
+                dst_attribute.data[i].color = [src_cv, src_cv, src_cv, 1.0]
+        elif alpha_mode == 'USE_DST':
+            for i, src_av in enumerate(src_attribute.data):
+                src_cv = src_av.color[src_channel_idx]
+                dst_alpha = dst_attribute.data[i].color[3]
+                dst_attribute.data[i].color = [src_cv, src_cv, src_cv, dst_alpha]
+        else: # 'KEEP_SRC'
+            for i, src_av in enumerate(src_attribute.data):
+                src_cv = src_av.color[src_channel_idx]
+                dst_attribute.data[i].color = [src_cv, src_cv, src_cv, src_av.color[3]]
     else:
         if swap:
-            for loop_index, loop in enumerate(mesh.loops):
-                src_val = src_vcol.data[loop_index].color[src_channel_idx]
-                dst_val = dst_vcol.data[loop_index].color[dst_channel_idx]
-                dst_vcol.data[loop_index].color[dst_channel_idx] = src_val
-                src_vcol.data[loop_index].color[src_channel_idx] = dst_val
+            for i in range(len(src_attribute.data)):
+                src_cv = src_attribute.data[i].color[src_channel_idx]
+                dst_cv = dst_attribute.data[i].color[dst_channel_idx]
+                src_attribute.data[i].color[src_channel_idx] = dst_cv
+                dst_attribute.data[i].color[dst_channel_idx] = src_cv
         else:
-            for loop_index, loop in enumerate(mesh.loops):
-                dst_vcol.data[loop_index].color[dst_channel_idx] = src_vcol.data[loop_index].color[src_channel_idx]
+            for i, src_av in enumerate(src_attribute.data):
+                dst_attribute.data[i].color[dst_channel_idx] = src_av.color[src_channel_idx]
 
     mesh.update()
 
 
-def blend_channels(mesh, src_vcol, dst_vcol, src_channel_idx, dst_channel_idx, result_channel_idx, operation='ADD'):
+# TODO: Should this also use a result attribute?
+def blend_channels(mesh, src_attribute, dst_attribute, src_channel_idx, dst_channel_idx,
+                   result_channel_idx, operation='ADD'):
     if operation == 'ADD':
-        for loop_index, loop in enumerate(mesh.loops):
-            val = src_vcol.data[loop_index].color[src_channel_idx] + dst_vcol.data[loop_index].color[dst_channel_idx]
-            dst_vcol.data[loop_index].color[result_channel_idx] = max(0.0, min(val, 1.0))  # clamp
+        for i, src_av in enumerate(src_attr.data):
+            val = src_av.color[src_channel_idx] + dst_attribute.data[i].color[dst_channel_idx]
+            dst_attribute.data[i].color[result_channel_idx] = max(0.0, min(val, 1.0)) # clamp
     elif operation == 'SUB':
-        for loop_index, loop in enumerate(mesh.loops):
-            val = src_vcol.data[loop_index].color[src_channel_idx] - dst_vcol.data[loop_index].color[dst_channel_idx]
-            dst_vcol.data[loop_index].color[result_channel_idx] = max(0.0, min(val, 1.0))  # clamp
+        for i, src_av in enumerate(src_attr.data):
+            val = src_av.color[src_channel_idx] - dst_attribute.data[i].color[dst_channel_idx]
+            dst_attribute.data[i].color[result_channel_idx] = max(0.0, min(val, 1.0)) # clamp
     elif operation == 'MUL':
-        for loop_index, loop in enumerate(mesh.loops):
-            val = src_vcol.data[loop_index].color[src_channel_idx] * dst_vcol.data[loop_index].color[dst_channel_idx]
-            dst_vcol.data[loop_index].color[result_channel_idx] = val
+        for i, src_av in enumerate(src_attr.data):
+            val = src_av.color[src_channel_idx] * dst_attribute.data[i].color[dst_channel_idx]
+            dst_attribute.data[i].color[result_channel_idx] = val
     elif operation == 'DIV':
-        for loop_index, loop in enumerate(mesh.loops):
-            src = src_vcol.data[loop_index].color[src_channel_idx]
-            dst = dst_vcol.data[loop_index].color[dst_channel_idx]
-            val = 0.0 if src == 0.0 else 1.0 if dst == 0.0 else src / dst
-            dst_vcol.data[loop_index].color[result_channel_idx] = val
+        for i in range(len(src_attr.data)):
+            src_cv = src_attribute.data[i].color[src_channel_idx]
+            dst_cv = dst_attribute.data[i].color[dst_channel_idx]
+            val = 1.0 if dst_cv == 0.0 else src_cv / dst_cv
+            dst_attribute.data[i].color[result_channel_idx] = max(0.0, min(val, 1.0)) # clamp
     elif operation == 'LIGHTEN':
-        for loop_index, loop in enumerate(mesh.loops):
-            src = src_vcol.data[loop_index].color[src_channel_idx]
-            dst = dst_vcol.data[loop_index].color[dst_channel_idx]
-            dst_vcol.data[loop_index].color[result_channel_idx] = src if src > dst else dst
+        for i in range(len(src_attr.data)):
+            src_cv = src_attribute.data[i].color[src_channel_idx]
+            dst_cv = dst_attribute.data[i].color[dst_channel_idx]
+            dst_attribute.data[i].color[result_channel_idx] = src_cv if src_cv > dst_cv else dst_cv
     elif operation == 'DARKEN':
-        for loop_index, loop in enumerate(mesh.loops):
-            src = src_vcol.data[loop_index].color[src_channel_idx]
-            dst = dst_vcol.data[loop_index].color[dst_channel_idx]
-            dst_vcol.data[loop_index].color[result_channel_idx] = src if src < dst else dst
+        for i in range(len(src_attr.data)):
+            src_cv = src_attribute.data[i].color[src_channel_idx]
+            dst_cv = dst_attribute.data[i].color[dst_channel_idx]
+            dst_attribute.data[i].color[result_channel_idx] = src_cv if src_cv < dst_cv else dst_cv
     elif operation == 'MIX':
-        for loop_index, loop in enumerate(mesh.loops):
-            dst_vcol.data[loop_index].color[result_channel_idx] = src_vcol.data[loop_index].color[src_channel_idx]
-    else:
+        for i, src_av in enumerate(src_attr.data):
+            dst_attribute.data[i].color[result_channel_idx] = src_av.color[src_channel_idx]
+    else: # UNDEFINED
         return
 
     mesh.update()
 
 
+# TODO: Properly deal with UV and normal attributes later
 def uvs_to_color(mesh, src_uv, dst_vcol, dst_u_idx=0, dst_v_idx=1):
     # by default copy u->r and v->g
     # uv range is -inf, inf so use fmod to remap to 0-1
@@ -179,6 +210,8 @@ def uvs_to_color(mesh, src_uv, dst_vcol, dst_u_idx=0, dst_v_idx=1):
     mesh.update()
 
 
+# TODO: Does this make any sense? Data loss is likely to occur,
+# and it's too niche to do properly (create uv islands based on contiguousness)
 def color_to_uvs(mesh, src_vcol, dst_uv, src_u_idx=0, src_v_idx=1):
     # by default copy r->u and g->v
     for loop_index, loop in enumerate(mesh.loops):
@@ -211,6 +244,7 @@ def normals_to_color(mesh, normals, dst_vcol):
     mesh.update()
 
 
+# TODO: Remove this, as it's likely not useful
 def color_to_normals(mesh, src_vcol):
     # ensure the mesh has empty split normals
     if not mesh.has_custom_normals:
@@ -554,6 +588,8 @@ def get_layer_info(context):
     return [src_type, src_id, dst_type, dst_id]
 
 
+# TODO: This needs rewriting due to change from vertex_colors to color_attributes
+# It must support POINT or CORNER with BYTE_COLOR or FLOAT_COLOR combinations
 def get_validated_input(context, get_src, get_dst):
     settings = context.scene.vertex_color_master_settings
     obj = context.active_object
@@ -570,7 +606,7 @@ def get_validated_input(context, get_src, get_dst):
 
     # are these conditions actually possible?
     if message is None:
-        if (src_type == type_vcol or dst_type == type_vcol) and mesh.vertex_colors is None:
+        if (src_type == type_vcol or dst_type == type_vcol) and mesh.color_attributes is None:
             message = "Object has no vertex colors."
         if (src_type == type_vgroup or dst_type == type_vgroup) and obj.vertex_groups is None:
             message = "Object has no vertex groups."
@@ -580,8 +616,8 @@ def get_validated_input(context, get_src, get_dst):
     # validate src
     if get_src and message is None:
         if src_type == type_vcol:
-            if src_id in mesh.vertex_colors:
-                rv['src_vcol'] = mesh.vertex_colors[src_id]
+            if src_id in mesh.color_attributes:
+                rv['src_vcol'] = mesh.color_attributes[src_id]
                 rv['src_channel_idx'] = channel_id_to_idx(settings.src_channel_id)
             else:
                 message = "Src color layer is not valid."
@@ -603,8 +639,8 @@ def get_validated_input(context, get_src, get_dst):
     # validate dst
     if get_dst and message is None:
         if dst_type == type_vcol:
-            if dst_id in mesh.vertex_colors:
-                rv['dst_vcol'] = mesh.vertex_colors[dst_id]
+            if dst_id in mesh.color_attributes:
+                rv['dst_vcol'] = mesh.color_attributes[dst_id]
                 rv['dst_channel_idx'] = channel_id_to_idx(settings.dst_channel_id)
             else:
                 message = "Dst color layer is not valid."
