@@ -1111,6 +1111,19 @@ class VERTEXCOLORMASTER_OT_EditBrushSettings(bpy.types.Operator):
         items=brush_blend_mode_items,
         description="Blending method to use when painting with the brush."
     )
+    
+    brush_name: StringProperty(
+        name='Brush Name',
+        default='Draw',
+        description="Name of the brush to use as reference"
+    )
+    
+    # New property for soft paint preset
+    use_soft_falloff: BoolProperty(
+        name='Use Soft Falloff',
+        default=False,
+        description="Apply soft falloff settings for smoother painting"
+    )
 
     @classmethod
     def poll(cls, context):
@@ -1118,41 +1131,63 @@ class VERTEXCOLORMASTER_OT_EditBrushSettings(bpy.types.Operator):
         return bpy.context.object.mode == 'VERTEX_PAINT' and obj is not None and obj.type == 'MESH'
 
     def execute(self, context):
-        # In case the user is using another brush, always revert to Draw
-        # to avoid messing up the settings of other brushes.
-        brush = bpy.data.brushes.get('Draw')
+        current_brush = context.tool_settings.vertex_paint.brush
         
-        if brush is None:
-            self.report({'ERROR'}, "Draw brush not found")
+        if not current_brush:
+            self.report({'ERROR'}, "No active brush found")
             return {'CANCELLED'}
-
-        # This changed between Blender 2.79 -> 2.80, but keeping blur here
-        if self.blend_mode == 'BLUR':
-            brush = bpy.data.brushes.get('Blur')
-            if brush is None:
-                self.report({'ERROR'}, "Blur brush not found")
-                return {'CANCELLED'}
-        else:
-            brush.vertex_tool = 'DRAW'
-            brush.blend = self.blend_mode
-
-        # Copy brush colors from current brush
-        prev_brush = context.tool_settings.vertex_paint.brush
-        if prev_brush:
-            brush.color = prev_brush.color
-            brush.secondary_color = prev_brush.secondary_color
         
-        # Set the active brush using the tool system (Blender 4.5+ compatible)
-        # Instead of direct assignment, we need to activate the tool
-        if self.blend_mode == 'BLUR':
-            bpy.ops.wm.tool_set_by_id(name="builtin_brush.Blur")
-        else:
-            bpy.ops.wm.tool_set_by_id(name="builtin_brush.Draw")
-            # Now we can modify the active brush settings
-            active_brush = context.tool_settings.vertex_paint.brush
-            if active_brush:
-                active_brush.blend = self.blend_mode
-
+        # Store current colors and strength to preserve them
+        prev_color = current_brush.color[:]
+        prev_secondary = current_brush.secondary_color[:]
+        prev_strength = current_brush.strength
+        prev_use_alpha = current_brush.use_alpha
+        
+        # Get the target brush to copy settings from
+        target_brush = bpy.data.brushes.get(self.brush_name)
+        
+        if not target_brush:
+            self.report({'ERROR'}, f"Brush '{self.brush_name}' not found")
+            return {'CANCELLED'}
+        
+        try:
+            # Set the vertex tool type (DRAW, BLUR, AVERAGE, SMEAR)
+            current_brush.vertex_tool = target_brush.vertex_tool
+            
+            # CRITICAL: Always set blend mode to avoid interference
+            # DRAW tools use the specified blend_mode parameter
+            # Non-DRAW tools (Blur, Average) must use MIX to work properly
+            if target_brush.vertex_tool == 'DRAW':
+                current_brush.blend = self.blend_mode
+                
+                # Try to apply soft falloff curve preset if requested
+                if self.use_soft_falloff:
+                    try:
+                        # Attempt to set the curve preset - this may be read-only!
+                        current_brush.curve_distance_falloff_preset = 'SMOOTH'
+                    except AttributeError:
+                        # If curve_distance_falloff_preset is read-only, we can't set it
+                        # User will need to manually set it in the Falloff panel
+                        self.report({'WARNING'}, "Could not set soft falloff curve automatically. Please set it manually in the Falloff panel.")
+                else:
+                    try:
+                        current_brush.curve_distance_falloff_preset = 'SPHERE'
+                    except AttributeError:
+                        pass  # Silently fail for non-soft mode
+            else:
+                # Reset to MIX for non-DRAW tools to prevent weird behavior
+                current_brush.blend = 'MIX'
+            
+            # Restore user settings that shouldn't change
+            current_brush.color = prev_color
+            current_brush.secondary_color = prev_secondary
+            current_brush.strength = prev_strength
+            current_brush.use_alpha = prev_use_alpha
+            
+        except Exception as e:
+            self.report({'ERROR'}, f"Could not set brush properties: {str(e)}")
+            return {'CANCELLED'}
+        
         return {'FINISHED'}
 
 

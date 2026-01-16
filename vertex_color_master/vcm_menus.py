@@ -134,6 +134,12 @@ class VERTEXCOLORMASTER_MT_PieMain(Menu):
             row.operator('vertexcolormaster.apply_isolated', text="Apply Changes").discard = False
             row.operator('vertexcolormaster.apply_isolated', text="Discard Changes").discard = True
 
+def get_active_brush_info(context):
+    """Get the current active brush vertex_tool and blend mode"""
+    brush = context.tool_settings.vertex_paint.brush
+    if brush:
+        return brush.vertex_tool, brush.blend
+    return None, None
 
 # Menu functions for drawing sub-panels
 def draw_brush_settings(context, layout, obj, settings, mode='STANDARD', pie=False):
@@ -167,14 +173,78 @@ def draw_brush_settings(context, layout, obj, settings, mode='STANDARD', pie=Fal
         row = col.row(align=False)
         row.operator('paint.vertex_color_set', text="Fill With Color")
 
+    # Get current brush info for highlighting
+    current_vertex_tool, current_blend = get_active_brush_info(context)
+    
+    # Blend modes row (switches brush to DRAW mode with different blend modes)
     col = layout.column(align=True)
     row = col.row(align=True)
-    row.operator('vertexcolormaster.edit_brush_settings', text="Mix").blend_mode = 'MIX'
-    row.operator('vertexcolormaster.edit_brush_settings', text="Add").blend_mode = 'ADD'
-    row.operator('vertexcolormaster.edit_brush_settings', text="Sub").blend_mode = 'SUB'
-    row.operator('vertexcolormaster.edit_brush_settings', text="Blur").blend_mode = 'BLUR'
+    
+    # Mix - DRAW tool with MIX blend
+    op = row.operator('vertexcolormaster.edit_brush_settings', text="Mix", 
+                      depress=(current_vertex_tool == 'DRAW' and current_blend == 'MIX'))
+    op.brush_name = 'Draw'
+    op.blend_mode = 'MIX'
+    op.use_soft_falloff = False
+    
+    # Add - DRAW tool with ADD blend
+    op = row.operator('vertexcolormaster.edit_brush_settings', text="Add", 
+                      depress=(current_vertex_tool == 'DRAW' and current_blend == 'ADD'))
+    op.brush_name = 'Add'
+    op.blend_mode = 'ADD'
+    op.use_soft_falloff = False
+    
+    # Sub - DRAW tool with SUB blend
+    op = row.operator('vertexcolormaster.edit_brush_settings', text="Sub", 
+                      depress=(current_vertex_tool == 'DRAW' and current_blend == 'SUB'))
+    op.brush_name = 'Subtract'
+    op.blend_mode = 'SUB'
+    op.use_soft_falloff = False
+    
+    # Mul - DRAW tool with MUL blend
+    op = row.operator('vertexcolormaster.edit_brush_settings', text="Mul", 
+                      depress=(current_vertex_tool == 'DRAW' and current_blend == 'MUL'))
+    op.brush_name = 'Multiply'
+    op.blend_mode = 'MUL'
+    op.use_soft_falloff = False
+    
+    # Specialized brush tools row
+    row = col.row(align=True)
+    
+    # Paint - DRAW tool with standard falloff curve
+    op = row.operator('vertexcolormaster.edit_brush_settings', text="Paint",
+                      depress=(current_vertex_tool == 'DRAW' and current_blend == 'MIX'))
+    op.brush_name = 'Draw'
+    op.blend_mode = 'MIX'
+    op.use_soft_falloff = False
+    
+    # NEW: Soft Paint - DRAW tool with SMOOTH falloff curve preset
+    op = row.operator('vertexcolormaster.edit_brush_settings', text="Soft",
+                      depress=False)  # Can't detect soft mode, so never highlight
+    op.brush_name = 'Draw'
+    op.blend_mode = 'MIX'
+    op.use_soft_falloff = True
+    
+    # Blur - BLUR tool
+    op = row.operator('vertexcolormaster.edit_brush_settings', text="Blur",
+                      depress=(current_vertex_tool == 'BLUR'))
+    op.brush_name = 'Blur'
+    op.blend_mode = 'MIX'
+    op.use_soft_falloff = False
+    
+    # Average - AVERAGE tool
+    op = row.operator('vertexcolormaster.edit_brush_settings', text="Average",
+                      depress=(current_vertex_tool == 'AVERAGE'))
+    op.brush_name = 'Average'
+    op.blend_mode = 'MIX'
+    op.use_soft_falloff = False
+    
+    # Smear button REMOVED as requested
+    
+    # Strength slider
     row = col.row(align=True)
     row.prop(brush, 'strength', text="Strength")
+    
     if mode == 'STANDARD':
         row = col.row(align=True)
         row.prop(brush, 'use_alpha', text="Affect Alpha")
